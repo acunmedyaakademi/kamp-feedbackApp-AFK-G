@@ -1,150 +1,283 @@
 import "../css/feedbackdetail.css";
-import { Data, Route, ScreenSize } from "../App";
-import { Fragment, useContext, useEffect, useState } from "react";
+import { Data, Route, ScreenSize } from "../context/AppContext";
+import { Fragment, useContext, useEffect, useMemo, useState } from "react";
+import toast from "react-hot-toast";
 
 export default function FeedbackDetail() {
   const { data, setData } = useContext(Data);
   const screenSize = useContext(ScreenSize);
   const route = useContext(Route);
-  const [newComment, setNewComment] = useState('');
-  const [reply, setReply] = useState('');
-  const [replyContent, setReplyContent] = useState('');
-  const [currentFeedback, setCurrentFeedback] = useState(data.feedbacks.find(feedback => feedback.id === location.hash.substring(1).split('/').at(-1)));
+
+  const [newComment, setNewComment] = useState("");
+  const [replyTargetId, setReplyTargetId] = useState(null);
+  const [replyContent, setReplyContent] = useState("");
+
+  const feedbackId = useMemo(() => {
+    const parts = route.split("/").filter(Boolean);
+    return parts.at(-1);
+  }, [route]);
+
+  const currentFeedback = useMemo(() => {
+    if (!data?.feedbacks) return null;
+    return data.feedbacks.find((f) => f.id === feedbackId);
+  }, [data?.feedbacks, feedbackId]);
 
   useEffect(() => {
-    setCurrentFeedback(data.feedbacks.find(feedback => feedback.id === location.hash.substring(1).split('/').at(-1)));
+    setReplyTargetId(null);
+    setReplyContent("");
   }, [route]);
 
   if (!currentFeedback) {
-    location.hash = '/404';
-    return;
+    return (
+      <div style={{ textAlign: "center", padding: "60px 20px", color: "#3A4374" }}>
+        <h2>Feedback not found</h2>
+        <p style={{ margin: "16px 0", color: "#647196" }}>The requested feedback item does not exist or was deleted.</p>
+        <a
+          href="#/"
+          style={{
+            display: "inline-block",
+            padding: "10px 20px",
+            backgroundColor: "#4661E6",
+            color: "#fff",
+            borderRadius: "10px",
+            textDecoration: "none",
+            fontWeight: "bold",
+          }}
+        >
+          Go back home
+        </a>
+      </div>
+    );
   }
 
-  useEffect(() => {
-    setReplyContent('');
-  }, [reply]);
+  const isUpvoted = data?.currentUser?.myUpvotes?.includes(currentFeedback.id);
 
   const handleUpvote = () => {
-    if (data.currentUser.myUpvotes.includes(currentFeedback.id)) {
-      data.currentUser.myUpvotes = data.currentUser.myUpvotes.filter(x => x !== currentFeedback.id)
-      data.feedbacks.find(x => x.id === currentFeedback.id).upvotes--;
-    } else {
-      data.currentUser.myUpvotes.push(currentFeedback.id);
-      data.feedbacks.find(x => x.id === currentFeedback.id).upvotes++;
-    }
-    setData({ ...data });
-    console.log('render')
-    console.log(data.currentUser.myUpvotes.includes(currentFeedback.id))
+    if (!data?.currentUser || !data?.feedbacks) return;
+    const myUpvotes = data.currentUser.myUpvotes || [];
+
+    const newMyUpvotes = isUpvoted
+      ? myUpvotes.filter((id) => id !== currentFeedback.id)
+      : [...myUpvotes, currentFeedback.id];
+
+    const newFeedbacks = data.feedbacks.map((f) => {
+      if (f.id === currentFeedback.id) {
+        return { ...f, upvotes: f.upvotes + (isUpvoted ? -1 : 1) };
+      }
+      return f;
+    });
+
+    setData({
+      ...data,
+      currentUser: { ...data.currentUser, myUpvotes: newMyUpvotes },
+      feedbacks: newFeedbacks,
+    });
   };
 
-  function handleSubmit(e) {
+  const handleCommentSubmit = (e) => {
     e.preventDefault();
     if (!newComment.trim()) return;
+
     const userComment = {
       id: crypto.randomUUID(),
+      author: data.currentUser.name,
       name: data.currentUser.name,
       username: data.currentUser.username,
-      content: newComment,
-      image: data.currentUser.image,
-      replies: []
-    }
-    currentFeedback.comments.push(userComment);
-    setData({ ...data });
-    setNewComment('');
-  }
+      content: newComment.trim(),
+      image: data.currentUser.image || "",
+      replies: [],
+    };
 
-  function handleReplySubmit(e, replyToComment = false, replyUserName = '') {
+    const updatedFeedbacks = data.feedbacks.map((f) => {
+      if (f.id === currentFeedback.id) {
+        return {
+          ...f,
+          comments: [...(f.comments || []), userComment],
+        };
+      }
+      return f;
+    });
+
+    setData({ ...data, feedbacks: updatedFeedbacks });
+    setNewComment("");
+    toast.success("Comment posted successfully!");
+  };
+
+  const handleReplySubmit = (e, topCommentId, replyToUsername) => {
     e.preventDefault();
     if (!replyContent.trim()) return;
+
+    const formattedUsername = replyToUsername
+      ? replyToUsername.startsWith("@")
+        ? replyToUsername
+        : `@${replyToUsername}`
+      : "";
+
     const userReply = {
       id: crypto.randomUUID(),
+      author: data.currentUser.name,
       name: data.currentUser.name,
       username: data.currentUser.username,
-      content: `${replyUserName} ` + replyContent,
-      image: data.currentUser.image,
-    }
-    currentFeedback.comments.find(comment => comment.id === replyToComment).replies.push(userReply);
-    setData({ ...data });
-    setReply('');
-    setReplyContent('');
-  }
+      content: `${formattedUsername ? formattedUsername + " " : ""}${replyContent.trim()}`,
+      image: data.currentUser.image || "",
+    };
+
+    const updatedFeedbacks = data.feedbacks.map((f) => {
+      if (f.id === currentFeedback.id) {
+        const updatedComments = (f.comments || []).map((c) => {
+          if (c.id === topCommentId) {
+            return {
+              ...c,
+              replies: [...(c.replies || []), userReply],
+            };
+          }
+          return c;
+        });
+        return { ...f, comments: updatedComments };
+      }
+      return f;
+    });
+
+    setData({ ...data, feedbacks: updatedFeedbacks });
+    setReplyTargetId(null);
+    setReplyContent("");
+    toast.success("Reply posted successfully!");
+  };
+
+  const totalCommentCount = (currentFeedback.comments || []).reduce((acc, comment) => {
+    return acc + 1 + (comment.replies ? comment.replies.length : 0);
+  }, 0);
+
+  const getAvatarSrc = (userObj) => {
+    if (userObj.image && userObj.image.trim() !== "") return userObj.image;
+    const nameStr = userObj.author || userObj.name || "User";
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(nameStr)}&background=4661E6&color=fff`;
+  };
 
   return (
     <div className="feedback-detail-container">
       <div className="feedback-detail-header">
-        <a href="#/">Go back <img src="/images/right-arrow.svg" alt="" /></a>
-        <a href={`#/edit-feedback/${currentFeedback.id}`}>Edit Feedback</a>
+        <a href="#/" className="go-back-link">
+          <svg width="7" height="10" viewBox="0 0 7 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 9L2 5L6 1" stroke="#4661E6" strokeWidth="2" />
+          </svg>
+          Go Back
+        </a>
+        <a href={`#/edit-feedback/${currentFeedback.id}`} className="edit-feedback-btn">
+          Edit Feedback
+        </a>
       </div>
+
       <div className="card-info">
         <div className="card-content">
           <div className="card-header">
-            {screenSize >= 768 && <span onClick={handleUpvote} className={'detailUpvote' + (data.currentUser.myUpvotes.includes(currentFeedback.id) ? ' active' : '')}>{currentFeedback.upvotes}
-              <svg width="9" height="7" viewBox="0 0 9 7" fill="#4661E6" xmlns="http://www.w3.org/2000/svg">
-                <path d="M0 6L4 2L8 6" strokeWidth="2" />
-              </svg>
-            </span>}
+            {screenSize >= 768 && (
+              <span onClick={handleUpvote} className={"detailUpvote" + (isUpvoted ? " active" : "")}>
+                <svg width="9" height="7" viewBox="0 0 9 7" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M0 6L4 2L8 6" stroke={isUpvoted ? "#fff" : "#4661E6"} strokeWidth="2" fill="none" />
+                </svg>
+                {currentFeedback.upvotes}
+              </span>
+            )}
             <div>
               <h4>{currentFeedback.title}</h4>
               <p>{currentFeedback.description}</p>
-              <button>{currentFeedback.category}</button>
+              <button className="category-tag">{currentFeedback.category}</button>
             </div>
           </div>
           <div className="card-footer">
-            {screenSize < 768 && <span onClick={handleUpvote} className={'detailUpvote' + (data.currentUser.myUpvotes.includes(currentFeedback.id) ? ' active' : '')}>{currentFeedback.upvotes}
-              <svg width="9" height="7" viewBox="0 0 9 7" fill="#4661E6" xmlns="http://www.w3.org/2000/svg">
-                <path d="M0 6L4 2L8 6" strokeWidth="2" />
-              </svg>
-            </span>}
-            <span className="bg">{currentFeedback.comments?.length} <img src="/images/comment.svg" alt="" /></span>
+            {screenSize < 768 && (
+              <span onClick={handleUpvote} className={"detailUpvote" + (isUpvoted ? " active" : "")}>
+                <svg width="9" height="7" viewBox="0 0 9 7" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M0 6L4 2L8 6" stroke={isUpvoted ? "#fff" : "#4661E6"} strokeWidth="2" fill="none" />
+                </svg>
+                {currentFeedback.upvotes}
+              </span>
+            )}
+            <span className="bg">
+              {totalCommentCount} <img src="/images/comment.svg" alt="comments" />
+            </span>
           </div>
         </div>
-
       </div>
+
       <div className="feedback-comments">
-        <h3>{currentFeedback.comments?.length} Comments</h3>
+        <h3>{totalCommentCount} Comments</h3>
         {currentFeedback.comments?.map((comment) => (
-          <div key={comment.id}>
+          <div key={comment.id} className="comment-wrapper">
             <div className="comments-area">
               <div className="comment">
                 <div className="comment-header">
-                  <img src={comment.image || `https://ui-avatars.com/api/?name=${comment.author.replace(' ', '+') || comment.name}`} alt="" />
+                  <img src={getAvatarSrc(comment)} alt="user avatar" />
                   <div>
                     <h4>{comment.author || comment.name}</h4>
                     <span>{comment.username}</span>
                   </div>
                 </div>
-                <button onClick={() => setReply(comment.id)}>Reply</button>
+                <button
+                  className="reply-btn"
+                  onClick={() => setReplyTargetId(replyTargetId === comment.id ? null : comment.id)}
+                >
+                  Reply
+                </button>
               </div>
-              <p>{comment.content}</p>
+              <p className="comment-body">{comment.content}</p>
             </div>
 
-            {reply === comment.id && (
-              <form onSubmit={(e) => handleReplySubmit(e, comment.id, comment.username)} autoComplete="off" className="reply-form">
-                <textarea name="userReply" id="" value={replyContent} onChange={(e) => setReplyContent(e.target.value)} className="text-area"></textarea>
-                <button>{screenSize >= 768 ? 'Post Reply' : 'Send'}</button>
+            {replyTargetId === comment.id && (
+              <form
+                onSubmit={(e) => handleReplySubmit(e, comment.id, comment.username)}
+                autoComplete="off"
+                className="reply-form"
+              >
+                <textarea
+                  name="userReply"
+                  value={replyContent}
+                  onChange={(e) => setReplyContent(e.target.value)}
+                  className="text-area"
+                  placeholder="Type your reply..."
+                ></textarea>
+                <button type="submit">{screenSize >= 768 ? "Post Reply" : "Send"}</button>
               </form>
             )}
+
             {comment.replies?.length > 0 && (
               <div className="replies-section">
-                {comment.replies.map(x => (
-                  <Fragment key={x.id}>
+                {comment.replies.map((replyItem) => (
+                  <Fragment key={replyItem.id}>
                     <div className="reply">
                       <div className="comment-header">
                         <div className="reply-header">
-                          <img src={x.image} alt="" />
+                          <img src={getAvatarSrc(replyItem)} alt="reply avatar" />
                           <div>
-                            <h4>{x.author || x.name}</h4>
-                            <span>{x.username}</span>
+                            <h4>{replyItem.author || replyItem.name}</h4>
+                            <span>{replyItem.username}</span>
                           </div>
                         </div>
-                        <button onClick={() => setReply(x.id)}>Reply</button>
+                        <button
+                          className="reply-btn"
+                          onClick={() => setReplyTargetId(replyTargetId === replyItem.id ? null : replyItem.id)}
+                        >
+                          Reply
+                        </button>
                       </div>
-                      <p>{x.content}</p>
+                      <p className="reply-body">{replyItem.content}</p>
                     </div>
-                    {reply === x.id && (
-                      <form onSubmit={(e) => handleReplySubmit(e, comment.id, x.username)} autoComplete="off" className="reply-form">
-                        <textarea name="userReply" id="" value={replyContent} onChange={(e) => setReplyContent(e.target.value)} className="text-area"></textarea>
-                        <button>{screenSize >= 768 ? 'Post Reply' : 'Send'}</button>
+
+                    {replyTargetId === replyItem.id && (
+                      <form
+                        onSubmit={(e) => handleReplySubmit(e, comment.id, replyItem.username)}
+                        autoComplete="off"
+                        className="reply-form"
+                      >
+                        <textarea
+                          name="userReply"
+                          value={replyContent}
+                          onChange={(e) => setReplyContent(e.target.value)}
+                          className="text-area"
+                          placeholder="Type your reply..."
+                        ></textarea>
+                        <button type="submit">{screenSize >= 768 ? "Post Reply" : "Send"}</button>
                       </form>
                     )}
                   </Fragment>
@@ -155,13 +288,20 @@ export default function FeedbackDetail() {
           </div>
         ))}
       </div>
+
       <div className="add-comment">
         <h4>Add Comment</h4>
-        <form onSubmit={handleSubmit} autoComplete="off">
-          <textarea name="userComment" id="" value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder="type your comment here" maxLength={250}></textarea>
+        <form onSubmit={handleCommentSubmit} autoComplete="off">
+          <textarea
+            name="userComment"
+            value={newComment}
+            onChange={(e) => setNewComment(e.target.value)}
+            placeholder="Type your comment here"
+            maxLength={250}
+          ></textarea>
           <div className="add-comment-footer">
             <span>{250 - newComment.length} Characters left</span>
-            <button>Post Comment</button>
+            <button type="submit">Post Comment</button>
           </div>
         </form>
       </div>
